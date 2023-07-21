@@ -8,6 +8,7 @@ import com.hmdp.entity.Shop;
 import com.hmdp.service.IShopService;
 import com.hmdp.utils.SystemConstants;
 import javafx.beans.binding.LongExpression;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
@@ -22,8 +23,8 @@ import javax.annotation.Resource;
  */
 @RestController
 @RequestMapping("/shop")
+@Slf4j
 public class ShopController {
-
     @Resource
     public IShopService shopService;
 
@@ -91,6 +92,7 @@ public class ShopController {
             @RequestParam(value = "name", required = false) String name,
             @RequestParam(value = "current", defaultValue = "1") Integer current
     ) {
+
         // 根据类型分页查询
         Page<Shop> page = shopService.query()
                 .like(StrUtil.isNotBlank(name), "name", name)

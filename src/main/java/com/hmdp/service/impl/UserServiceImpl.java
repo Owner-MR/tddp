@@ -18,6 +18,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpSession;
 
 import java.util.HashMap;
@@ -90,6 +91,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
         //session.setAttribute(LOGIN_USER_KEY, userDTO) ;
         return Result.ok(token);
+    }
+
+    @Override
+    public void logOut(HttpServletRequest request) {
+        String token = request.getHeader("Authorization");
+        log.info("token：{}", LOGIN_USER_KEY + token);
+        stringRedisTemplate.delete(LOGIN_USER_KEY + token);
     }
 
     private User createUserWithPhone(String phone) {
