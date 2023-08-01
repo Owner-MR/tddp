@@ -100,6 +100,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         stringRedisTemplate.delete(LOGIN_USER_KEY + token);
     }
 
+    @Override
+    public Result userByid(Long id) {
+        User user = getById(id);
+        if (user == null) return Result.ok();
+        UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
+        return Result.ok(userDTO);
+    }
+
     private User createUserWithPhone(String phone) {
         //创建用户
         User user = new User();
