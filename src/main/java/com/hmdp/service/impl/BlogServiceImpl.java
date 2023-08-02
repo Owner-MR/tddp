@@ -2,16 +2,21 @@ package com.hmdp.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.ListUtil;
+import cn.hutool.core.date.DateTime;
 import cn.hutool.core.util.BooleanUtil;
 import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
+import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
+import com.hmdp.entity.Follow;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.BlogMapper;
 import com.hmdp.service.IBlogService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.service.IFollowService;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.SystemConstants;
@@ -19,8 +24,10 @@ import com.hmdp.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
@@ -44,6 +51,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     private IUserService userService;
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
+    
+    @Autowired
+    private IFollowService followService;
 
     @Override
     public Result queryHotBlog(Integer current) {
@@ -127,6 +137,73 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 .stream().map(user -> BeanUtil.copyProperties(user, UserDTO.class))
                 .collect(Collectors.toList());
         return Result.ok(userDTOS);
+    }
+
+    @Override
+    public Result saveBlog(Blog blog) {
+
+        // 获取登录用户
+        UserDTO user = UserHolder.getUser();
+        blog.setUserId(user.getId());
+        // 保存探店博文
+        boolean saved = blogService.save(blog);
+        if (saved){
+            //feed推送到粉丝收件箱中
+            List<Follow> followUserIds = followService.query().eq("follow_user_id", user.getId()).list();
+            for (Follow followUserId : followUserIds) {
+                Long userId = followUserId.getUserId();
+                String key = RedisConstants.FEED_KEY + userId;
+                stringRedisTemplate.opsForZSet().add(key, blog.getId().toString(), System.currentTimeMillis());
+            }
+        }
+        return Result.ok(blog.getId());
+    }
+
+    @Override
+    public Result queryBlogOfFollow(Long max, Integer offset) {
+        //获取当前用户
+        Long userId = UserHolder.getUser().getId();
+        //查询收件箱
+        String key = RedisConstants.FEED_KEY + userId;
+        Set<ZSetOperations.TypedTuple<String>> scores = stringRedisTemplate.opsForZSet().
+                reverseRangeByScoreWithScores(key, 0, max, offset, 3);
+        if (scores == null || scores.isEmpty()){
+            return Result.ok();
+        }
+        //解析数据 userId, minTime, offset
+        List<Long> ids = new ArrayList<>(scores.size());
+        long minTime = 0;
+        int os = 1;
+        StringBuilder stringBuilder = new StringBuilder();
+        //遍历所有关注的用户和分数
+        for (ZSetOperations.TypedTuple<String> score : scores) {
+            ids.add(Long.valueOf(score.getValue()));
+            stringBuilder.append(score.getValue() + ",");
+            long time = score.getScore().longValue();
+            if (time == minTime) {
+                os++;
+            }
+            else {
+                minTime = time;
+                os = 1;
+            }
+        }
+        StringBuilder idStr = stringBuilder.deleteCharAt(stringBuilder.length() - 1);
+        //ids集合有序，而mysql中in查询无序，需要指定变量顺序
+        List<Blog> blogs = query().in("id", ids)
+                .last("ORDER BY FIELD (id," + idStr + ")").list();
+        for (Blog blog : blogs) {
+            //查询blog有关用户
+            setUserNameWithIcon(blog);
+            //查询blog是否被点赞
+            isBlogLiked(blog);
+        }
+        //封装并返回
+        ScrollResult scrollResult = new ScrollResult();
+        scrollResult.setList(blogs);
+        scrollResult.setMinTime(minTime);
+        scrollResult.setOffset(os);
+        return Result.ok(scrollResult);
     }
 
     private void setUserNameWithIcon(Blog blog){
