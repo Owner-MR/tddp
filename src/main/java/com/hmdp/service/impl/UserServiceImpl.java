@@ -2,6 +2,7 @@ package com.hmdp.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.bean.copier.CopyOptions;
+import cn.hutool.core.date.DateTime;
 import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.RandomUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -11,17 +12,24 @@ import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.UserMapper;
 import com.hmdp.service.IUserService;
+import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RegexUtils;
+import com.hmdp.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
+import org.springframework.data.redis.connection.BitFieldSubCommands;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpSession;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -106,6 +114,40 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         if (user == null) return Result.ok();
         UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
         return Result.ok(userDTO);
+    }
+
+    @Override
+    public Result sign() {
+        Long userId = UserHolder.getUser().getId();
+        LocalDateTime date = LocalDateTime.now();
+        String key = USER_SIGN_KEY + userId + ":" + date.format(DateTimeFormatter.ofPattern("yyyy/MM"));
+        int dayOfMonth = date.getDayOfMonth();
+        stringRedisTemplate.opsForValue().setBit(key, dayOfMonth - 1, true);
+        return Result.ok();
+    }
+
+    @Override
+    public Result signCount() {
+        Long userId = UserHolder.getUser().getId();
+        LocalDateTime date = LocalDateTime.now();
+        int dayOfMonth = date.getDayOfMonth() + 7;
+        String key = USER_SIGN_KEY + userId + ":" + date.format(DateTimeFormatter.ofPattern("yyyy/MM"));
+        //到目前为止该用户的签到情况，返回十进制数
+        List<Long> field = stringRedisTemplate.opsForValue().bitField(key, BitFieldSubCommands.create()
+                .get(BitFieldSubCommands.BitFieldType.unsigned(dayOfMonth))
+                .valueAt(0));
+        if (field == null || field.isEmpty()){
+            return Result.ok(0);
+        }
+        int count = 0;
+        //获取签到情况 （十进制）
+        Long num = field.get(0);
+        if (num == null || num == 0) return Result.ok(0);
+        while ((num & 1) == 1){
+            count++;
+            num >>= 1;
+        }
+        return Result.ok(count);
     }
 
     private User createUserWithPhone(String phone) {
